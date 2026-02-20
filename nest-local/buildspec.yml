@@ -1,0 +1,59 @@
+# CodeBuild buildspec – builds API e Worker na AWS e faz push para o ECR.
+# O Worker depende da imagem do engine; o engine é buildado primeiro e não é enviado ao ECR.
+#
+# Variáveis de ambiente no projeto CodeBuild (recomendado):
+#   AWS_REGION          – ex.: us-east-1
+#   ECR_REPO_API        – nome do repositório ECR da API (ex.: nest-api)
+#   ECR_REPO_WORKER     – nome do repositório ECR do Worker (ex.: nest-worker)
+#   APP_PATH            – opcional; subpasta do repositório onde está o docker-compose (ex.: nest-local). Deixe vazio se a raiz do repo já for a pasta do app.
+
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo "=== Pre-build ==="
+      - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - export AWS_REGION=${AWS_REGION:-us-east-1}
+      - export ECR_REPO_API=${ECR_REPO_API:-nest-api}
+      - export ECR_REPO_WORKER=${ECR_REPO_WORKER:-nest-worker}
+      - export ECR_URI_API=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_API}
+      - export ECR_URI_WORKER=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_WORKER}
+      - export IMAGE_TAG=${IMAGE_TAG:-latest}
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+      - |
+        if [ -n "${APP_PATH}" ]; then
+          echo "Entering app path: ${APP_PATH}"
+          cd "${APP_PATH}"
+        fi
+      - echo "Working directory: $(pwd)"
+  build:
+    commands:
+      - echo "=== Building engine (base for worker) ==="
+      - docker build -t nest-local-engine ./services/engine
+      - echo "=== Building API ==="
+      - docker build -t nest-api ./services/api
+      - echo "=== Building Worker ==="
+      - docker build -t nest-worker ./services/worker
+      - echo "=== Tagging and pushing to ECR ==="
+      - docker tag nest-api ${ECR_URI_API}:${IMAGE_TAG}
+      - docker tag nest-api ${ECR_URI_API}:latest
+      - docker tag nest-worker ${ECR_URI_WORKER}:${IMAGE_TAG}
+      - docker tag nest-worker ${ECR_URI_WORKER}:latest
+      - docker push ${ECR_URI_API}:${IMAGE_TAG}
+      - docker push ${ECR_URI_API}:latest
+      - docker push ${ECR_URI_WORKER}:${IMAGE_TAG}
+      - docker push ${ECR_URI_WORKER}:latest
+  post_build:
+    commands:
+      - echo "=== Build completed ==="
+      - echo "API image: ${ECR_URI_API}:${IMAGE_TAG}"
+      - echo "Worker image: ${ECR_URI_WORKER}:${IMAGE_TAG}"
+
+artifacts:
+  files: []
+  discard-paths: yes
+
+cache:
+  paths: []

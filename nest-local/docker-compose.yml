@@ -1,0 +1,100 @@
+services:
+  init:
+    build: ./services/init
+    image: nest-local-init
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: nest-results
+      TABLE_NAME: nest_jobs
+    depends_on:
+      - dynamodb
+      - minio
+    restart: "no"
+
+  api:
+    build: ./services/api
+    image: nest-local-api
+    ports:
+      - "0.0.0.0:8080:8080"
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+      SQS_ENDPOINT: http://elasticmq:9324
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: nest-results
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      elasticmq:
+        condition: service_started
+      dynamodb:
+        condition: service_started
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    build:
+      context: ./services/worker
+      dockerfile: Dockerfile
+    image: nest-local-worker
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+      SQS_ENDPOINT: http://elasticmq:9324
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: nest-results
+      SQS_QUEUE_URL: http://elasticmq:9324/000000000000/nest-jobs
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      engine:
+        condition: service_started
+      elasticmq:
+        condition: service_started
+      dynamodb:
+        condition: service_started
+      minio:
+        condition: service_started
+
+  engine:
+    build: ./services/engine
+    image: nest-local-engine
+    # No long-running process; image only provides nest_engine binary for worker
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:latest
+    ports:
+      - "9324:9324"
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf
+    command: ["-Dconfig.file=/opt/elasticmq.conf"]
+
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    ports:
+      - "8000:8000"
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: ["server", "/data", "--console-address", ":9001"]
