@@ -77,3 +77,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    sys.exit(0)  # Force exit — boto3 connection pool threads may keep process alive

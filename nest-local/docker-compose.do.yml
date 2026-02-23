@@ -4,14 +4,14 @@
 
 services:
   dynamodb:
-    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/data"]
-    volumes:
-      - dynamodb-data:/data
+    # Use in-memory mode to avoid volume permission issues with dynamodblocal user.
+    # The init container recreates the table on every startup, so persistence is not needed.
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
+    volumes: []
 
   minio:
     volumes:
       - minio-data:/data
 
 volumes:
-  dynamodb-data:
   minio-data:
