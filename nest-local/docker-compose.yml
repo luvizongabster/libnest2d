@@ -27,6 +27,9 @@ services:
       SQS_ENDPOINT: http://elasticmq:9324
       DYNAMODB_ENDPOINT: http://dynamodb:8000
       S3_ENDPOINT: http://minio:9000
+      # S3_PUBLIC_ENDPOINT: URL pública do MinIO acessível pelo browser/cliente.
+      # Troque pelo IP/hostname da máquina se acessar de fora (ex: http://192.168.1.100:9000).
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
       S3_BUCKET: nest-results
     depends_on:
       init:
@@ -90,7 +93,9 @@ services:
     image: amazon/dynamodb-local:latest
     ports:
       - "8000:8000"
-    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/home/dynamodblocal/data"]
 
   minio:
     image: minio/minio:latest
@@ -101,3 +106,6 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     command: ["server", "/data", "--console-address", ":9001"]
+
+volumes:
+  dynamodb-data:

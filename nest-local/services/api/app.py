@@ -1,3 +1,6 @@
+import asyncio
+import datetime
+import json
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -13,6 +16,9 @@ USE_REAL_AWS = bool(SQS_QUEUE_URL)
 SQS_ENDPOINT = os.environ.get("SQS_ENDPOINT", "http://elasticmq:9324")
 DYNAMODB_ENDPOINT = os.environ.get("DYNAMODB_ENDPOINT", "http://dynamodb:8000")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://minio:9000")
+# S3_PUBLIC_ENDPOINT: public-facing URL for presigned URLs (e.g. http://localhost:9000).
+# Defaults to S3_ENDPOINT. Must be reachable by the client (browser/frontend).
+S3_PUBLIC_ENDPOINT = os.environ.get("S3_PUBLIC_ENDPOINT", S3_ENDPOINT)
 S3_BUCKET = os.environ.get("S3_BUCKET", "nest-results")
 AWS_ACCESS = os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin")
 AWS_SECRET = os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin")
@@ -42,15 +48,21 @@ def _aws_kwargs(service_endpoint=None):
 
 sqs = boto3.client("sqs", **_aws_kwargs(SQS_ENDPOINT))
 dynamodb = boto3.resource("dynamodb", **_aws_kwargs(DYNAMODB_ENDPOINT))
+# s3_client: used for put/get operations (internal endpoint)
 s3_client = boto3.client(
     "s3",
     config=boto_config,
     **_aws_kwargs(S3_ENDPOINT),
 )
+# s3_presign: used only for presigned URL generation (public endpoint, reachable by clients)
+s3_presign = boto3.client(
+    "s3",
+    config=boto_config,
+    **_aws_kwargs(S3_PUBLIC_ENDPOINT),
+)
 
 
 async def wait_for_dependencies():
-    import asyncio
     for _ in range(60):
         try:
             sqs.list_queues()
@@ -91,13 +103,13 @@ def create_job(payload: dict):
         Item={
             "job_id": job_id,
             "status": "QUEUED",
-            "updated_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+            "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
         }
     )
     queue_url = SQS_QUEUE_URL or f"{SQS_ENDPOINT.rstrip('/')}/000000000000/{QUEUE_NAME}"
     sqs.send_message(
         QueueUrl=queue_url,
-        MessageBody=__import__("json").dumps({"job_id": job_id, "payload": payload}),
+        MessageBody=json.dumps({"job_id": job_id, "payload": payload}),
     )
     return {"job_id": job_id}
 
@@ -117,7 +129,7 @@ def get_job(job_id: str):
         s3_key = item.get("s3_key", "")
         if not s3_key:
             raise HTTPException(status_code=500, detail="Missing s3_key")
-        url = s3_client.generate_presigned_url(
+        url = s3_presign.generate_presigned_url(
             "get_object",
             Params={"Bucket": S3_BUCKET, "Key": s3_key},
             ExpiresIn=PRESIGNED_EXPIRY,

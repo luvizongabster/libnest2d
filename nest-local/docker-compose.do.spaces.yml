@@ -71,16 +71,16 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
-      engine:
-        condition: service_started
       elasticmq:
         condition: service_started
       dynamodb:
         condition: service_started
 
+  # engine: build-only image; binary is baked into worker at build time.
   engine:
     build: ./services/engine
     image: nest-local-engine
+    entrypoint: ["/bin/true"]
 
   elasticmq:
     image: softwaremill/elasticmq-native:latest

@@ -3,6 +3,12 @@ FROM nest-local-engine AS engine
 
 FROM python:3.12-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnlopt0 \
+    libnlopt-cxx0 \
+    libpolyclipping22 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY --from=engine /app/nest_engine /app/nest_engine
 RUN chmod +x /app/nest_engine
