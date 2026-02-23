@@ -46,6 +46,11 @@ def main():
     except dd.exceptions.ResourceInUseException:
         print(f"Table {TABLE_NAME} already exists")
 
+    skip_s3 = os.environ.get("SKIP_S3_INIT", "").strip().lower() in ("1", "true", "yes")
+    if skip_s3:
+        print("SKIP_S3_INIT set: skipping S3/bucket creation (e.g. using Digital Ocean Spaces)")
+        return
+
     for _ in range(30):
         try:
             s3 = boto3.client(
@@ -66,7 +71,7 @@ def main():
         except Exception as e:
             print(e, file=sys.stderr)
             time.sleep(2)
-    print("MinIO not reachable or bucket creation failed", file=sys.stderr)
+    print("S3/MinIO not reachable or bucket creation failed", file=sys.stderr)
     sys.exit(1)
 
 

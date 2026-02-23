@@ -17,9 +17,9 @@ AWS_ACCESS = os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin")
 AWS_SECRET = os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin")
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
-QUEUE_NAME = "nest-jobs"
-TABLE_NAME = "nest_jobs"
-PRESIGNED_EXPIRY = 600
+QUEUE_NAME = os.environ.get("QUEUE_NAME", "nest-jobs")
+TABLE_NAME = os.environ.get("TABLE_NAME", "nest_jobs")
+PRESIGNED_EXPIRY = int(os.environ.get("PRESIGNED_EXPIRY", "600"))
 
 boto_config = Config(
     signature_version="s3v4",

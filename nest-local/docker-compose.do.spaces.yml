@@ -1,0 +1,102 @@
+# Digital Ocean com Spaces (S3-compatível). Sem container MinIO.
+# Pré-requisito: crie um Space no painel DO e gere uma Spaces API key.
+# Copie .env.do.example para .env e defina S3_ENDPOINT, S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY.
+# Uso: docker compose -f docker-compose.do.spaces.yml up -d --build
+# Defina SKIP_S3_INIT=1 no .env (o bucket já existe no Space).
+
+services:
+  init:
+    build: ./services/init
+    image: nest-local-init
+    env_file: .env
+    environment:
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_BUCKET: ${S3_BUCKET}
+      TABLE_NAME: ${TABLE_NAME:-nest_jobs}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      SKIP_S3_INIT: ${SKIP_S3_INIT:-1}
+    depends_on:
+      - dynamodb
+    restart: "no"
+
+  api:
+    build: ./services/api
+    image: nest-local-api
+    ports:
+      - "0.0.0.0:8080:8080"
+    env_file: .env
+    environment:
+      SQS_ENDPOINT: http://elasticmq:9324
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_BUCKET: ${S3_BUCKET}
+      TABLE_NAME: ${TABLE_NAME:-nest_jobs}
+      QUEUE_NAME: ${QUEUE_NAME:-nest-jobs}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      elasticmq:
+        condition: service_started
+      dynamodb:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    build:
+      context: ./services/worker
+      dockerfile: Dockerfile
+    image: nest-local-worker
+    env_file: .env
+    environment:
+      SQS_ENDPOINT: http://elasticmq:9324
+      SQS_QUEUE_URL: http://elasticmq:9324/000000000000/nest-jobs
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_BUCKET: ${S3_BUCKET}
+      TABLE_NAME: ${TABLE_NAME:-nest_jobs}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      engine:
+        condition: service_started
+      elasticmq:
+        condition: service_started
+      dynamodb:
+        condition: service_started
+
+  engine:
+    build: ./services/engine
+    image: nest-local-engine
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:latest
+    ports:
+      - "9324:9324"
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf
+    command: ["-Dconfig.file=/opt/elasticmq.conf"]
+
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - dynamodb-data:/data
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/data"]
+
+volumes:
+  dynamodb-data:

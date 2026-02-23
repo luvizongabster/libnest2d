@@ -1,0 +1,17 @@
+# Override para Digital Ocean (Droplet com MinIO no próprio servidor).
+# Uso: docker compose -f docker-compose.yml -f docker-compose.do.yml up -d
+# Opcional: env_file: .env (copie .env.do.example para .env e preencha).
+
+services:
+  dynamodb:
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/data"]
+    volumes:
+      - dynamodb-data:/data
+
+  minio:
+    volumes:
+      - minio-data:/data
+
+volumes:
+  dynamodb-data:
+  minio-data:

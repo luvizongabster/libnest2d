@@ -104,11 +104,35 @@ Cada elemento de `parts`:
   - Serviço Worker: Fargate (ou EC2), uma ou mais tasks consumindo da fila SQS, com as mesmas variáveis de ambiente.
 - **Load balancer**: na frente da API, se for público; segurança com VPC e security groups conforme sua política.
 
+## Configuração (variáveis de ambiente)
+
+A API e o Worker leem todas as configurações de ambiente; o comportamento é compatível com **Digital Ocean** (MinIO no Droplet ou **Spaces**) e com **AWS** (SQS, DynamoDB, S3).
+
+| Variável | Default | Descrição |
+|----------|---------|-----------|
+| `TABLE_NAME` | `nest_jobs` | Tabela DynamoDB |
+| `QUEUE_NAME` | `nest-jobs` | Nome da fila SQS/ElasticMQ |
+| `S3_BUCKET` | `nest-results` | Bucket S3 / MinIO / Spaces |
+| `S3_ENDPOINT` | `http://minio:9000` | Endpoint S3-compatível (Spaces: `https://nyc3.digitaloceanspaces.com`) |
+| `PRESIGNED_EXPIRY` | `600` | Expiração (segundos) da URL de resultado |
+| `ENGINE_TIMEOUT` | `20` | Timeout do engine (segundos) |
+| `SKIP_S3_INIT` | — | `1` para não criar bucket no init (ex.: usar Spaces já criado no painel) |
+
+Para **Digital Ocean** use os arquivos `docker-compose.do.yml` (MinIO + persistência) ou `docker-compose.do.spaces.yml` (Spaces); exemplo de env em `.env.do.example`.
+
+## Deploy em nuvem
+
+- **Digital Ocean:** [docs/PASSO-A-PASSO-DIGITALOCEAN.md](docs/PASSO-A-PASSO-DIGITALOCEAN.md) – stack compatível com DO (Droplet + MinIO ou Spaces).
+- **AWS:** [docs/PASSO-A-PASSO-AWS.md](docs/PASSO-A-PASSO-AWS.md) e [docs/PLANO-AWS.md](docs/PLANO-AWS.md).
+
 ## Estrutura do projeto
 
 ```
 nest-local/
   docker-compose.yml
+  docker-compose.do.yml          # Override DO (MinIO + volumes)
+  docker-compose.do.spaces.yml   # Stack DO com Spaces (sem MinIO)
+  .env.do.example
   elasticmq.conf
   services/
     api/       (FastAPI)

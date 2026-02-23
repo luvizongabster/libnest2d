@@ -12,13 +12,13 @@ USE_REAL_AWS = SQS_QUEUE_URL.startswith("https://sqs.")
 DYNAMODB_ENDPOINT = os.environ.get("DYNAMODB_ENDPOINT", "http://dynamodb:8000")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://minio:9000")
 S3_BUCKET = os.environ.get("S3_BUCKET", "nest-results")
-TABLE_NAME = "nest_jobs"
+TABLE_NAME = os.environ.get("TABLE_NAME", "nest_jobs")
 AWS_ACCESS = os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin")
 AWS_SECRET = os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin")
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 ENGINE_PATH = os.environ.get("ENGINE_PATH", "/app/nest_engine")
-ENGINE_TIMEOUT = 20
-ERROR_MAX_LEN = 2000
+ENGINE_TIMEOUT = int(os.environ.get("ENGINE_TIMEOUT", "20"))
+ERROR_MAX_LEN = int(os.environ.get("ERROR_MAX_LEN", "2000"))
 
 boto_config = Config(signature_version="s3v4")
 
