@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import boto3
 from botocore.config import Config
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "").strip()
 USE_REAL_AWS = bool(SQS_QUEUE_URL)
@@ -48,25 +49,33 @@ s3_client = boto3.client(
 )
 
 
-def wait_for_dependencies():
-    import time
+async def wait_for_dependencies():
+    import asyncio
     for _ in range(60):
         try:
             sqs.list_queues()
             dynamodb.meta.client.describe_table(TableName=TABLE_NAME)
             return
         except Exception:
-            time.sleep(2)
+            await asyncio.sleep(2)
     raise RuntimeError("Dependencies (SQS, DynamoDB) not ready")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    wait_for_dependencies()
+    await wait_for_dependencies()
     yield
 
 
 app = FastAPI(title="Nest API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")

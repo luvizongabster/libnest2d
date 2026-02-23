@@ -19,7 +19,10 @@ WORKDIR /app/build
 COPY CMakeLists.txt main.cpp ./
 ENV NLopt_PATH=/usr
 ENV CLIPPER_PATH=/usr
-RUN cmake -B . -D LIBNEST2D_SOURCE_DIR=/tmp/libnest2d \
+RUN cmake -B . \
+    -D LIBNEST2D_SOURCE_DIR=/tmp/libnest2d \
+    -D LIBNEST2D_BACKEND_CLIPPER=ON \
+    -D LIBNEST2D_OPTIMIZER_NLOPT=ON \
     && cmake --build . --target nest_engine
 
 # Runtime stage

@@ -67,19 +67,31 @@ def process_message(msg):
     receipt_handle = msg["ReceiptHandle"]
 
     update_job(job_id, status="RUNNING")
+    proc = None
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             [ENGINE_PATH],
-            input=json.dumps(payload).encode(),
-            capture_output=True,
-            timeout=ENGINE_TIMEOUT,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-        if result.returncode != 0:
-            err = (result.stderr or b"").decode("utf-8", errors="replace").strip()[:ERROR_MAX_LEN]
+        try:
+            stdout, stderr = proc.communicate(
+                input=json.dumps(payload).encode(),
+                timeout=ENGINE_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            update_job(job_id, status="FAILED", error=f"Engine timeout ({ENGINE_TIMEOUT}s)"[:ERROR_MAX_LEN])
+            sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
+            return
+        if proc.returncode != 0:
+            err = (stderr or b"").decode("utf-8", errors="replace").strip()[:ERROR_MAX_LEN]
             update_job(job_id, status="FAILED", error=err)
             sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
             return
-        out = result.stdout.decode("utf-8", errors="replace")
+        out = stdout.decode("utf-8", errors="replace")
         key = f"results/{job_id}.json"
         s3.put_object(
             Bucket=S3_BUCKET,
@@ -88,9 +100,13 @@ def process_message(msg):
             ContentType="application/json",
         )
         update_job(job_id, status="SUCCEEDED", s3_key=key)
-    except subprocess.TimeoutExpired:
-        update_job(job_id, status="FAILED", error="Engine timeout (20s)"[:ERROR_MAX_LEN])
     except Exception as e:
+        if proc is not None:
+            try:
+                proc.kill()
+                proc.communicate()
+            except Exception:
+                pass
         update_job(job_id, status="FAILED", error=str(e)[:ERROR_MAX_LEN])
     sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
 

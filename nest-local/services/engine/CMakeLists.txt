@@ -4,6 +4,10 @@ project(nest_engine CXX)
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# libnest2d backend selection: Clipper for geometry, NLopt for optimization
+set(LIBNEST2D_BACKEND_CLIPPER ON CACHE BOOL "Use Clipper backend" FORCE)
+set(LIBNEST2D_OPTIMIZER_NLOPT ON CACHE BOOL "Use NLopt optimizer" FORCE)
+
 # nlohmann/json via FetchContent
 include(FetchContent)
 FetchContent_Declare(
@@ -25,4 +29,4 @@ endif()
 add_subdirectory(${LIBNEST2D_SOURCE_DIR} ${CMAKE_BINARY_DIR}/libnest2d_build)
 
 add_executable(nest_engine main.cpp)
-target_link_libraries(nest_engine PRIVATE libnest2d_headeronly nlohmann_json::nlohmann_json)
+target_link_libraries(nest_engine PRIVATE libnest2d nlohmann_json::nlohmann_json)

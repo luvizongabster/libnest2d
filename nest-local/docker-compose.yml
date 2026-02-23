@@ -57,12 +57,11 @@ services:
       DYNAMODB_ENDPOINT: http://dynamodb:8000
       S3_ENDPOINT: http://minio:9000
       S3_BUCKET: nest-results
+      TABLE_NAME: nest_jobs
       SQS_QUEUE_URL: http://elasticmq:9324/000000000000/nest-jobs
     depends_on:
       init:
         condition: service_completed_successfully
-      engine:
-        condition: service_started
       elasticmq:
         condition: service_started
       dynamodb:
@@ -70,10 +69,14 @@ services:
       minio:
         condition: service_started
 
+  # engine: build-only image; nest_engine binary is copied into the worker image at build time.
+  # Run `docker compose build engine` before `docker compose build worker`.
   engine:
     build: ./services/engine
     image: nest-local-engine
-    # No long-running process; image only provides nest_engine binary for worker
+    # No long-running process; image only provides nest_engine binary for worker.
+    # Override entrypoint so the container exits cleanly (code 0) instead of failing.
+    entrypoint: ["/bin/true"]
 
   elasticmq:
     image: softwaremill/elasticmq-native:latest
