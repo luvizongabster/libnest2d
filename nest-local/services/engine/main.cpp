@@ -41,14 +41,16 @@ int main(int argc, char* argv[]) {
     Coord scaled_bin_h = static_cast<Coord>(std::round(bin_h * scale));
 
     double spacing = 0.0;
-    std::vector<double> rotations_deg = {0.0, 90.0};
+    std::vector<double> rotations_deg = {0.0, 90.0, 180.0, 270.0};
     int timeout_ms = 0;
+    bool use_djd = true;  // DJD heuristic gives much better utilization than FirstFit
     if (j.contains("options")) {
       const auto& opt = j["options"];
       spacing = opt.value("spacing", 0.0);
       if (opt.contains("rotations") && opt["rotations"].is_array())
         rotations_deg = opt["rotations"].get<std::vector<double>>();
       timeout_ms = opt.value("timeout_ms", 0);
+      use_djd = opt.value("selection", "djd") != "first_fit";
     }
     Coord scaled_spacing = static_cast<Coord>(std::round(spacing * scale));
 
@@ -85,14 +87,10 @@ int main(int argc, char* argv[]) {
       return 1;
     }
 
-    Box bin(scaled_bin_w, scaled_bin_h);
+    for (size_t i = 0; i < items.size(); ++i)
+      items[i].priority(static_cast<int>(i));
 
-    NestConfig<NfpPlacer, FirstFitSelection> cfg;
-    cfg.placer_config.rotations.clear();
-    for (double deg : rotations_deg)
-      cfg.placer_config.rotations.push_back(deg * PI / 180.0);
-    if (cfg.placer_config.rotations.empty())
-      cfg.placer_config.rotations = {0.0, PI/2, PI, 3*PI/2};
+    Box bin(scaled_bin_w, scaled_bin_h);
 
     auto start_time = std::chrono::steady_clock::now();
     NestControl ctl;
@@ -104,7 +102,34 @@ int main(int argc, char* argv[]) {
       };
     }
 
-    size_t bins_used = nest(items.begin(), items.end(), bin, scaled_spacing, cfg, ctl);
+    size_t bins_used = 0;
+    PackGroup result_bins;
+    if (use_djd) {
+      NestConfig<NfpPlacer, DJDHeuristic> cfg;
+      cfg.placer_config.rotations.clear();
+      for (double deg : rotations_deg)
+        cfg.placer_config.rotations.push_back(deg * PI / 180.0);
+      if (cfg.placer_config.rotations.empty())
+        cfg.placer_config.rotations = {0.0, PI/2, PI, 3*PI/2};
+      cfg.selector_config.try_pairs = true;
+      cfg.selector_config.try_triplets = false;
+      cfg.selector_config.try_reverse_order = true;
+      _Nester<NfpPlacer, DJDHeuristic> nester(bin, scaled_spacing, cfg.placer_config, cfg.selector_config);
+      if (ctl.stopcond) nester.stopCondition(ctl.stopcond);
+      bins_used = nester.execute(items.begin(), items.end());
+      result_bins = nester.lastResult();
+    } else {
+      NestConfig<NfpPlacer, FirstFitSelection> cfg;
+      cfg.placer_config.rotations.clear();
+      for (double deg : rotations_deg)
+        cfg.placer_config.rotations.push_back(deg * PI / 180.0);
+      if (cfg.placer_config.rotations.empty())
+        cfg.placer_config.rotations = {0.0, PI/2, PI, 3*PI/2};
+      _Nester<NfpPlacer, FirstFitSelection> nester(bin, scaled_spacing, cfg.placer_config, cfg.selector_config);
+      if (ctl.stopcond) nester.stopCondition(ctl.stopcond);
+      bins_used = nester.execute(items.begin(), items.end());
+      result_bins = nester.lastResult();
+    }
 
     auto end_time = std::chrono::steady_clock::now();
     long runtime_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
@@ -119,17 +144,21 @@ int main(int argc, char* argv[]) {
     nl::json out;
     out["bins_used"] = bins_used;
     out["placements"] = nl::json::array();
-    for (size_t i = 0; i < items.size(); ++i) {
-      const auto& it = items[i];
-      auto tr = it.translation();
-      double rot_deg = static_cast<double>(Degrees(it.rotation()));
-      out["placements"].push_back({
-        {"instance_id", instance_ids[i]},
-        {"bin", it.binId()},
-        {"x", static_cast<double>(getX(tr)) / scale},
-        {"y", static_cast<double>(getY(tr)) / scale},
-        {"rotation", rot_deg}
-      });
+    for (const auto& bin_items : result_bins) {
+      for (const auto& it_ref : bin_items) {
+        const Item& it = it_ref.get();
+        int idx = it.priority();
+        if (idx < 0 || static_cast<size_t>(idx) >= instance_ids.size()) continue;
+        auto tr = it.translation();
+        double rot_deg = static_cast<double>(Degrees(it.rotation()));
+        out["placements"].push_back(nl::json{
+          {"instance_id", instance_ids[idx]},
+          {"bin", it.binId()},
+          {"x", static_cast<double>(getX(tr)) / scale},
+          {"y", static_cast<double>(getY(tr)) / scale},
+          {"rotation", rot_deg}
+        });
+      }
     }
     out["metrics"] = {
       {"runtime_ms", runtime_ms},

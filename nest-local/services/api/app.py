@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import json
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -35,6 +36,17 @@ boto_config = Config(
     retries={"mode": "standard", "max_attempts": 3},
 )
 
+# #region agent log
+def _append_debug_log(message, data=None, hypothesis_id=None):
+    line = json.dumps({"sessionId": "4f46c5", "message": message, "data": data or {}, "hypothesisId": hypothesis_id, "location": "app.py", "timestamp": time.time() * 1000}) + "\n"
+    try:
+        with open("/debug-logs/debug-4f46c5.log", "a") as f:
+            f.write(line)
+    except Exception:
+        import sys
+        print(line.strip(), file=sys.stderr)
+# #endregion
+
 
 def _aws_kwargs(service_endpoint=None):
     """Kwargs for boto3 client: use IAM role on AWS, else local endpoints + credentials."""
@@ -60,12 +72,22 @@ s3_client = boto3.client(
 
 
 async def wait_for_dependencies():
-    for _ in range(60):
+    # #region agent log
+    _debug_log = lambda msg, d=None, hid=None: _append_debug_log(msg, d, hid)
+    # #endregion
+    for attempt in range(60):
         try:
             sqs.list_queues()
             dynamodb.meta.client.describe_table(TableName=TABLE_NAME)
+            # #region agent log
+            _debug_log("API dependencies ready", {"attempt": attempt + 1}, "H3,H4")
+            # #endregion
             return
-        except Exception:
+        except Exception as e:
+            # #region agent log
+            if attempt == 0 or attempt == 59:
+                _debug_log("wait_for_dependencies attempt", {"attempt": attempt + 1, "error": str(e)}, "H4")
+            # #endregion
             await asyncio.sleep(2)
     raise RuntimeError("Dependencies (SQS, DynamoDB) not ready")
 
@@ -112,7 +134,8 @@ def create_job(payload: dict):
 
 
 @app.get("/jobs/{job_id}")
-def get_job(job_id: str):
+def get_job(job_id: str, embed: str | None = None):
+    """Get job status. When SUCCEEDED, returns result_url (presigned). Use ?embed=result to include the full optimization result inline so the frontend can update the canvas (chapas) without a second request."""
     table = dynamodb.Table(TABLE_NAME)
     try:
         r = table.get_item(Key={"job_id": job_id})
@@ -128,8 +151,6 @@ def get_job(job_id: str):
             raise HTTPException(status_code=500, detail="Missing s3_key")
         # Generate presigned URL using the internal endpoint, then rewrite
         # the base URL to the public endpoint so the browser can reach it.
-        # The S3v4 signature is computed against the internal Host (minio:9000)
-        # and nginx forwards that same Host header when proxying /s3/ → minio:9000.
         url = s3_client.generate_presigned_url(
             "get_object",
             Params={"Bucket": S3_BUCKET, "Key": s3_key},
@@ -137,11 +158,20 @@ def get_job(job_id: str):
         )
         if S3_PUBLIC_ENDPOINT != S3_ENDPOINT:
             url = url.replace(S3_ENDPOINT, S3_PUBLIC_ENDPOINT, 1)
-        return {
+        out = {
             "status": "SUCCEEDED",
             "result_url": url,
             "expires_in_sec": PRESIGNED_EXPIRY,
         }
+        # Inline result for canvas: frontend can use result.placements and result.bins_used to render chapas
+        if embed and embed.strip().lower() == "result":
+            try:
+                resp = s3_client.get_object(Bucket=S3_BUCKET, Key=s3_key)
+                body = resp["Body"].read().decode("utf-8")
+                out["result"] = json.loads(body)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to load result: {e}")
+        return out
     if status == "FAILED":
         return {"status": "FAILED", "error": item.get("error", "Unknown error")}
     return {"status": status}

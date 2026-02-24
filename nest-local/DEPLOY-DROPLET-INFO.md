@@ -77,7 +77,65 @@ docker compose -f docker-compose.yml -f docker-compose.do.yml up -d --build
 ## Depois do deploy
 
 - **API:** http://159.223.149.208:8080  
-- **Health:** http://159.223.149.208:8080/health  
+- **Health:** http://159.223.149.208:8080/health (ou http://159.223.149.208/health via nginx na porta 80)  
 - **MinIO Console:** http://159.223.149.208:9001 (minioadmin / minioadmin)
 
 O primeiro build pode levar alguns minutos (engine C++).
+
+---
+
+## Reiniciar containers e testar (no Digital Ocean)
+
+O sistema deve estar rodando no Droplet. Para reiniciar e testar:
+
+**1. Conectar no Droplet**
+
+```bash
+ssh root@159.223.149.208
+```
+
+**2. Ir para a pasta do projeto e reiniciar o stack**
+
+(Se o projeto estiver em `/root/Libnest2D/nest-local`:)
+
+```bash
+cd /root/Libnest2D/nest-local
+docker compose -f docker-compose.yml -f docker-compose.do.yml down
+docker compose -f docker-compose.yml -f docker-compose.do.yml up -d
+```
+
+Se o projeto estiver em `/root/libnest2d/nest-local`, use esse path no `cd`.
+
+**3. Aguardar ~1 minuto** (init deve sair com código 0; API e worker sobem em seguida).
+
+**4. Verificar status dos serviços**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.do.yml ps
+```
+
+Esperado: **init** com status `Exited (0)`; **api**, **worker**, **nginx**, **elasticmq**, **dynamodb**, **minio** com status **Up**.
+
+**5. Testar a aplicação**
+
+Na sua máquina local (ou no próprio Droplet):
+
+```bash
+# Health direto na API (porta 8080)
+curl -s http://159.223.149.208:8080/health
+
+# Health via nginx (porta 80), se nginx estiver no compose
+curl -s http://159.223.149.208/health
+```
+
+Resposta esperada: `{"status":"ok"}`.
+
+**6. (Opcional) Criar um job de teste**
+
+```bash
+curl -s -X POST http://159.223.149.208:8080/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"width": 100, "height": 100}'
+```
+
+Deve retornar um JSON com `job_id` e status.

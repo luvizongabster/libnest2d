@@ -39,7 +39,7 @@ curl -X POST http://localhost:8080/jobs \
         "polygon": [[0,0], [100,0], [100,50], [0,50], [0,0]]
       }
     ],
-    "options": { "spacing": 2, "rotations": [0, 90], "timeout_ms": 10000 }
+    "options": { "spacing": 2, "rotations": [0, 90, 180, 270], "timeout_ms": 10000 }
   }'
 ```
 
@@ -58,24 +58,54 @@ curl -s "http://localhost:8080/jobs/$JOB_ID"
 - `SUCCEEDED`: a resposta traz `result_url` e `expires_in_sec` (ex.: 600).
 - `FAILED`: a resposta traz `error`.
 
-## 4. Baixar o resultado
+Para **refletir o resultado na representação das chapas no canvas**, use `?embed=result` para receber o resultado inline (evita segunda requisição e CORS):
 
-Com o `result_url` retornado quando o status é `SUCCEEDED`:
+```bash
+curl -s "http://localhost:8080/jobs/<job_id>?embed=result"
+```
+
+Resposta quando `SUCCEEDED`: `result_url`, `expires_in_sec` e `result` com o JSON da otimização (veja abaixo). O frontend deve usar `result.bins_used` e `result.placements` para desenhar cada chapa e posicionar as peças.
+
+## 4. Formato do resultado (para o canvas)
+
+O objeto `result` (ou o JSON em `result_url`) tem:
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `bins_used` | number | Número de chapas utilizadas (índices `0` a `bins_used - 1`) |
+| `placements` | array | Posicionamento de cada peça na chapa |
+| `metrics` | object | `runtime_ms`, `utilization` |
+
+Cada elemento de `placements`:
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `instance_id` | string | Identificador da instância da peça (ex.: `"P1#1"`) — correlaciona com o `id` e a ordem do input |
+| `bin` | number | Índice da chapa (0-based) onde a peça foi colocada |
+| `x` | number | Posição X na chapa (mesma unidade do input, ex.: mm) |
+| `y` | number | Posição Y na chapa |
+| `rotation` | number | Rotação em graus (0, 90, etc.) |
+
+**Como refletir no canvas:** para cada chapa (0 até `bins_used - 1`), desenhe um retângulo de tamanho `bin.width` x `bin.height`. Para cada item em `placements` com `bin === índice_da_chapa`, desenhe a peça correspondente a `instance_id` na posição `(x, y)` com rotação `rotation` (o polígono da peça vem do payload original de `parts`, identificado por `instance_id` que é `id#número`, ex.: `P1#1`).
+
+## 5. Baixar o resultado (alternativa)
+
+Com o `result_url` retornado quando o status é `SUCCEEDED` (sem `embed=result`):
 
 ```bash
 curl -s "<result_url>" -o result.json
 ```
 
-O JSON contém `bins_used`, `placements` (instance_id, bin, x, y, rotation) e `metrics` (runtime_ms, utilization).
+O JSON tem a mesma estrutura descrita acima: `bins_used`, `placements`, `metrics`.
 
-## 5. Estrutura do JSON de entrada
+## 6. Estrutura do JSON de entrada
 
 | Campo     | Tipo   | Descrição |
 |----------|--------|-----------|
 | `units`  | string | Unidade (ex.: `"mm"`) |
 | `bin`    | objeto | `width`, `height` (número) |
 | `parts`  | array  | Lista de peças |
-| `options`| objeto | Opcional: `spacing`, `rotations` (graus), `timeout_ms` |
+| `options`| objeto | Opcional: `spacing`, `rotations` (graus), `timeout_ms`, `selection` (`"djd"` ou `"first_fit"`). Por padrão usa **DJD** e rotações `[0, 90, 180, 270]` para melhor utilização das chapas. |
 
 Cada elemento de `parts`:
 
@@ -83,7 +113,7 @@ Cada elemento de `parts`:
 - `qty`: número de cópias
 - `polygon`: array de `[x, y]` (contorno fechado; pode repetir o primeiro ponto no final)
 
-## 6. Trocar ElasticMQ por SQS real
+## 7. Trocar ElasticMQ por SQS real
 
 - Remova o serviço `elasticmq` do `docker-compose.yml` e use uma fila SQS na AWS.
 - Defina nas variáveis de ambiente da API e do worker:
@@ -91,7 +121,7 @@ Cada elemento de `parts`:
   - `SQS_QUEUE_URL`: URL completa da fila (ex.: `https://sqs.us-east-1.amazonaws.com/123456789012/nest-jobs`).
 - Use credenciais AWS (IAM role, env ou profile) em vez de `minioadmin`.
 
-## 7. Subir no ECS
+## 8. Subir no ECS
 
 - **Imagens**: faça build e push das imagens `nest-local-api` e `nest-local-worker` para um ECR (ou registry compatível).
 - **Engine**: o worker já inclui o binário `nest_engine`; não é necessário um serviço ECS para o engine.
