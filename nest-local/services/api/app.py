@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import json
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -35,6 +36,17 @@ boto_config = Config(
     retries={"mode": "standard", "max_attempts": 3},
 )
 
+# #region agent log
+def _append_debug_log(message, data=None, hypothesis_id=None):
+    line = json.dumps({"sessionId": "4f46c5", "message": message, "data": data or {}, "hypothesisId": hypothesis_id, "location": "app.py", "timestamp": time.time() * 1000}) + "\n"
+    try:
+        with open("/debug-logs/debug-4f46c5.log", "a") as f:
+            f.write(line)
+    except Exception:
+        import sys
+        print(line.strip(), file=sys.stderr)
+# #endregion
+
 
 def _aws_kwargs(service_endpoint=None):
     """Kwargs for boto3 client: use IAM role on AWS, else local endpoints + credentials."""
@@ -60,12 +72,22 @@ s3_client = boto3.client(
 
 
 async def wait_for_dependencies():
-    for _ in range(60):
+    # #region agent log
+    _debug_log = lambda msg, d=None, hid=None: _append_debug_log(msg, d, hid)
+    # #endregion
+    for attempt in range(60):
         try:
             sqs.list_queues()
             dynamodb.meta.client.describe_table(TableName=TABLE_NAME)
+            # #region agent log
+            _debug_log("API dependencies ready", {"attempt": attempt + 1}, "H3,H4")
+            # #endregion
             return
-        except Exception:
+        except Exception as e:
+            # #region agent log
+            if attempt == 0 or attempt == 59:
+                _debug_log("wait_for_dependencies attempt", {"attempt": attempt + 1, "error": str(e)}, "H4")
+            # #endregion
             await asyncio.sleep(2)
     raise RuntimeError("Dependencies (SQS, DynamoDB) not ready")
 
