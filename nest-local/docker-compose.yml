@@ -109,6 +109,7 @@ services:
     volumes:
       - dynamodb-data:/home/dynamodblocal/data
     command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/home/dynamodblocal/data"]
+    user: root
 
   minio:
     image: minio/minio:latest
@@ -118,7 +119,10 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
     command: ["server", "/data", "--console-address", ":9001"]
 
 volumes:
   dynamodb-data:
+  minio-data:

@@ -1,14 +1,79 @@
 import asyncio
 import datetime
 import json
+import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
+from typing import List, Optional
 
 import boto3
 from botocore.config import Config
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, field_validator
+
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_data = {
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "service": "api",
+        }
+        if hasattr(record, "job_id"):
+            log_data["job_id"] = record.job_id
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data)
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("api")
+handler = logging.StreamHandler()
+handler.setFormatter(JSONFormatter())
+logger.handlers = [handler]
+logger.propagate = False
+
+
+class Bin(BaseModel):
+    width: float = Field(..., gt=0, le=100000, description="Largura do bin")
+    height: float = Field(..., gt=0, le=100000, description="Altura do bin")
+
+
+class Part(BaseModel):
+    id: str = Field(..., min_length=1, max_length=100, description="ID da peça")
+    qty: int = Field(default=1, ge=1, le=10000, description="Quantidade de cópias")
+    polygon: List[List[float]] = Field(..., min_length=3, description="Coordenadas do polígono")
+
+    @field_validator("polygon")
+    @classmethod
+    def validate_polygon(cls, v):
+        if len(v) < 3:
+            raise ValueError("O polígono deve ter pelo menos 3 pontos")
+        for i, point in enumerate(v):
+            if len(point) != 2:
+                raise ValueError(f"Ponto {i} deve ter exatamente 2 coordenadas [x, y]")
+            if not all(isinstance(coord, (int, float)) for coord in point):
+                raise ValueError(f"Coordenadas do ponto {i} devem ser números")
+        return v
+
+
+class NestingOptions(BaseModel):
+    spacing: float = Field(default=0.0, ge=0, description="Espaçamento entre peças")
+    rotations: List[float] = Field(default=[0.0, 90.0], description="Rotações permitidas em graus")
+    timeout_ms: int = Field(default=0, ge=0, le=300000, description="Timeout em milissegundos")
+
+
+class NestingJobRequest(BaseModel):
+    units: str = Field(default="mm", pattern="^(mm|m|cm|in)$", description="Unidade de medida")
+    bin: Bin
+    parts: List[Part] = Field(..., min_length=1, max_length=10000, description="Lista de peças")
+    options: Optional[NestingOptions] = None
+
+    model_config = {"extra": "forbid"}
 
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "").strip()
 USE_REAL_AWS = bool(SQS_QUEUE_URL)
@@ -36,6 +101,7 @@ boto_config = Config(
 )
 
 
+
 def _aws_kwargs(service_endpoint=None):
     """Kwargs for boto3 client: use IAM role on AWS, else local endpoints + credentials."""
     if USE_REAL_AWS:
@@ -60,12 +126,18 @@ s3_client = boto3.client(
 
 
 async def wait_for_dependencies():
-    for _ in range(60):
+    loop = asyncio.get_event_loop()
+    for attempt in range(60):
         try:
-            sqs.list_queues()
-            dynamodb.meta.client.describe_table(TableName=TABLE_NAME)
+            await loop.run_in_executor(None, sqs.list_queues)
+            await loop.run_in_executor(
+                None, lambda: dynamodb.meta.client.describe_table(TableName=TABLE_NAME)
+            )
+            logger.info(f"Dependencies ready after {attempt + 1} attempts")
             return
-        except Exception:
+        except Exception as e:
+            if attempt == 0 or attempt == 59:
+                logger.warning(f"Waiting for dependencies (attempt {attempt + 1}): {e}")
             await asyncio.sleep(2)
     raise RuntimeError("Dependencies (SQS, DynamoDB) not ready")
 
@@ -93,7 +165,7 @@ def health():
 
 
 @app.post("/jobs")
-def create_job(payload: dict):
+def create_job(payload: NestingJobRequest):
     job_id = str(uuid.uuid4())
     table = dynamodb.Table(TABLE_NAME)
     table.put_item(
@@ -106,8 +178,9 @@ def create_job(payload: dict):
     queue_url = SQS_QUEUE_URL or f"{SQS_ENDPOINT.rstrip('/')}/000000000000/{QUEUE_NAME}"
     sqs.send_message(
         QueueUrl=queue_url,
-        MessageBody=json.dumps({"job_id": job_id, "payload": payload}),
+        MessageBody=json.dumps({"job_id": job_id, "payload": payload.model_dump()}),
     )
+    logger.info(f"Job created: {job_id}", extra={"job_id": job_id})
     return {"job_id": job_id}
 
 

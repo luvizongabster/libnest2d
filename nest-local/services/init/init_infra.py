@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """Create DynamoDB table and S3 bucket if they do not exist. Run once after dynamodb and minio are up."""
+import logging
 import os
 import sys
 import time
 
 import boto3
 from botocore.config import Config
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='{"timestamp":"%(asctime)s","level":"%(levelname)s","service":"init","message":"%(message)s"}',
+    datefmt="%Y-%m-%dT%H:%M:%SZ",
+)
+logger = logging.getLogger("init")
 
 DYNAMODB_ENDPOINT = os.environ.get("DYNAMODB_ENDPOINT", "http://dynamodb:8000")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://minio:9000")
@@ -17,8 +25,11 @@ AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
 boto_config = Config(signature_version="s3v4")
 
+
 def main():
-    for _ in range(30):
+    logger.info(f"Starting init with DYNAMODB_ENDPOINT={DYNAMODB_ENDPOINT}, S3_ENDPOINT={S3_ENDPOINT}")
+
+    for attempt in range(30):
         try:
             dd = boto3.client(
                 "dynamodb",
@@ -32,9 +43,10 @@ def main():
         except Exception:
             time.sleep(2)
     else:
-        print("DynamoDB not reachable", file=sys.stderr)
+        logger.error("DynamoDB not reachable after 30 attempts")
         sys.exit(1)
 
+    logger.info("DynamoDB connected")
     try:
         dd.create_table(
             TableName=TABLE_NAME,
@@ -42,16 +54,16 @@ def main():
             KeySchema=[{"AttributeName": "job_id", "KeyType": "HASH"}],
             BillingMode="PAY_PER_REQUEST",
         )
-        print(f"Created table {TABLE_NAME}")
+        logger.info(f"Created table {TABLE_NAME}")
     except dd.exceptions.ResourceInUseException:
-        print(f"Table {TABLE_NAME} already exists")
+        logger.info(f"Table {TABLE_NAME} already exists")
 
     skip_s3 = os.environ.get("SKIP_S3_INIT", "").strip().lower() in ("1", "true", "yes")
     if skip_s3:
-        print("SKIP_S3_INIT set: skipping S3/bucket creation (e.g. using Digital Ocean Spaces)")
+        logger.info("SKIP_S3_INIT set: skipping S3/bucket creation")
         return
 
-    for _ in range(30):
+    for attempt in range(30):
         try:
             s3 = boto3.client(
                 "s3",
@@ -63,18 +75,19 @@ def main():
             )
             buckets = [b["Name"] for b in s3.list_buckets().get("Buckets", [])]
             if S3_BUCKET in buckets:
-                print(f"Bucket {S3_BUCKET} already exists")
+                logger.info(f"Bucket {S3_BUCKET} already exists")
                 return
             s3.create_bucket(Bucket=S3_BUCKET)
-            print(f"Created bucket {S3_BUCKET}")
+            logger.info(f"Created bucket {S3_BUCKET}")
             return
         except Exception as e:
-            print(e, file=sys.stderr)
+            logger.warning(f"S3 attempt {attempt + 1} failed: {e}")
             time.sleep(2)
-    print("S3/MinIO not reachable or bucket creation failed", file=sys.stderr)
+
+    logger.error("S3/MinIO not reachable or bucket creation failed")
     sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
-    sys.exit(0)  # Force exit — boto3 connection pool threads may keep process alive
+    os._exit(0)

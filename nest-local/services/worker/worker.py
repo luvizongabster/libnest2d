@@ -1,10 +1,82 @@
 import json
+import logging
 import os
+import signal
 import subprocess
+import sys
+import threading
 import time
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import boto3
 from botocore.config import Config
+
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_data = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "service": "worker",
+        }
+        if hasattr(record, "job_id"):
+            log_data["job_id"] = record.job_id
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data)
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("worker")
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(JSONFormatter())
+logger.handlers = [handler]
+logger.propagate = False
+
+shutdown_event = threading.Event()
+jobs_processed = 0
+last_job_time = None
+start_time = time.time()
+
+
+def signal_handler(signum, frame):
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    shutdown_event.set()
+
+
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            status = {
+                "status": "healthy" if not shutdown_event.is_set() else "shutting_down",
+                "jobs_processed": jobs_processed,
+                "last_job_time": last_job_time,
+                "uptime_seconds": int(time.time() - start_time),
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(status).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass
+
+
+def start_health_server(port=8081):
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    logger.info(f"Health server started on port {port}")
+    return server
 
 SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "http://elasticmq:9324/000000000000/nest-jobs")
 USE_REAL_AWS = SQS_QUEUE_URL.startswith("https://sqs.")
@@ -61,11 +133,14 @@ def update_job(job_id: str, **kwargs):
 
 
 def process_message(msg):
+    global jobs_processed, last_job_time
+
     body = json.loads(msg["Body"])
     job_id = body["job_id"]
     payload = body["payload"]
     receipt_handle = msg["ReceiptHandle"]
 
+    logger.info(f"Processing job {job_id}", extra={"job_id": job_id})
     update_job(job_id, status="RUNNING")
     proc = None
     try:
@@ -83,11 +158,14 @@ def process_message(msg):
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.communicate()
-            update_job(job_id, status="FAILED", error=f"Engine timeout ({ENGINE_TIMEOUT}s)"[:ERROR_MAX_LEN])
+            error_msg = f"Engine timeout ({ENGINE_TIMEOUT}s)"
+            logger.error(f"Job {job_id} failed: {error_msg}", extra={"job_id": job_id})
+            update_job(job_id, status="FAILED", error=error_msg[:ERROR_MAX_LEN])
             sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
             return
         if proc.returncode != 0:
             err = (stderr or b"").decode("utf-8", errors="replace").strip()[:ERROR_MAX_LEN]
+            logger.error(f"Job {job_id} failed: engine error", extra={"job_id": job_id})
             update_job(job_id, status="FAILED", error=err)
             sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
             return
@@ -100,6 +178,9 @@ def process_message(msg):
             ContentType="application/json",
         )
         update_job(job_id, status="SUCCEEDED", s3_key=key)
+        logger.info(f"Job {job_id} completed successfully", extra={"job_id": job_id})
+        jobs_processed += 1
+        last_job_time = datetime.utcnow().isoformat() + "Z"
     except Exception as e:
         if proc is not None:
             try:
@@ -107,23 +188,33 @@ def process_message(msg):
                 proc.communicate()
             except Exception:
                 pass
+        logger.exception(f"Job {job_id} failed with exception", extra={"job_id": job_id})
         update_job(job_id, status="FAILED", error=str(e)[:ERROR_MAX_LEN])
     sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=receipt_handle)
 
 
 def main():
-    while True:
+    health_server = start_health_server()
+    logger.info("Worker started, waiting for messages...")
+
+    while not shutdown_event.is_set():
         try:
             r = sqs.receive_message(
                 QueueUrl=SQS_QUEUE_URL,
                 MaxNumberOfMessages=1,
-                WaitTimeSeconds=20,
+                WaitTimeSeconds=5,
             )
             for msg in r.get("Messages", []):
+                if shutdown_event.is_set():
+                    logger.info("Shutdown requested, skipping new messages")
+                    break
                 process_message(msg)
         except Exception as e:
-            print(e)
-            time.sleep(5)
+            if not shutdown_event.is_set():
+                logger.exception("Error in main loop")
+                time.sleep(5)
+
+    logger.info("Worker shutdown complete")
 
 
 if __name__ == "__main__":
