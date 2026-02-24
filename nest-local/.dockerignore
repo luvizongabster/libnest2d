@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+.venv
+venv
+env
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Logs
+*.log
+debug-*.log
+
+# Environment files
+.env*
+!.env.example
+!.env.do.example
+
+# Documentation
+*.md
+docs/
+plans/
+
+# Build artifacts
+*.tar
+*.gz
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Cursor/Editor
+.cursor/
