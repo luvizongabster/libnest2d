@@ -105,7 +105,9 @@ O JSON tem a mesma estrutura descrita acima: `bins_used`, `placements`, `metrics
 | `units`  | string | Unidade (ex.: `"mm"`) |
 | `bin`    | objeto | `width`, `height` (número) |
 | `parts`  | array  | Lista de peças |
-| `options`| objeto | Opcional: `spacing`, `rotations` (graus), `timeout_ms`, `selection` (`"djd"` ou `"first_fit"`). Por padrão usa **DJD** e rotações `[0, 90, 180, 270]` para melhor utilização das chapas. |
+| `options`| objeto | Opcional: `spacing`, `rotations` (graus), `timeout_ms`, `selection` (`"djd"` ou `"first_fit"`), `try_triplets`, `initial_fill_proportion`, `waste_increment`. Por padrão usa **DJD** e rotações `[0, 90, 180, 270]`. |
+
+**Modo máxima utilização (melhor aproveitamento de chapas):** Para priorizar utilização em vez de tempo, use `selection: "djd"`, `try_triplets: true`, `rotations: [0, 90, 180, 270]`, e um `timeout_ms` alto (ex.: 120000). Opcionalmente `waste_increment: 0.05` e `initial_fill_proportion: 0.33`. Aumente a variável de ambiente `ENGINE_TIMEOUT` do worker (em segundos) para pelo menos o valor de timeout_ms/1000. Benchmark em [benchmark/README.md](benchmark/README.md).
 
 Cada elemento de `parts`:
 

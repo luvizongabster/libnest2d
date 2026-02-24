@@ -43,7 +43,11 @@ int main(int argc, char* argv[]) {
     double spacing = 0.0;
     std::vector<double> rotations_deg = {0.0, 90.0, 180.0, 270.0};
     int timeout_ms = 0;
-    bool use_djd = true;  // DJD heuristic gives much better utilization than FirstFit
+    bool use_djd = true;
+    bool try_triplets = false;
+    double initial_fill_proportion = 1.0 / 3.0;
+    double waste_increment = 0.1;
+    bool use_bottom_left = false;
     if (j.contains("options")) {
       const auto& opt = j["options"];
       spacing = opt.value("spacing", 0.0);
@@ -51,6 +55,10 @@ int main(int argc, char* argv[]) {
         rotations_deg = opt["rotations"].get<std::vector<double>>();
       timeout_ms = opt.value("timeout_ms", 0);
       use_djd = opt.value("selection", "djd") != "first_fit";
+      try_triplets = opt.value("try_triplets", false);
+      initial_fill_proportion = opt.value("initial_fill_proportion", 1.0 / 3.0);
+      waste_increment = opt.value("waste_increment", 0.1);
+      use_bottom_left = opt.value("placement", "nfp") == "bottom_left";
     }
     Coord scaled_spacing = static_cast<Coord>(std::round(spacing * scale));
 
@@ -104,7 +112,13 @@ int main(int argc, char* argv[]) {
 
     size_t bins_used = 0;
     PackGroup result_bins;
-    if (use_djd) {
+    if (use_bottom_left) {
+      NestConfig<BottomLeftPlacer, FirstFitSelection> cfg;
+      _Nester<BottomLeftPlacer, FirstFitSelection> nester(bin, scaled_spacing, cfg.placer_config, cfg.selector_config);
+      if (ctl.stopcond) nester.stopCondition(ctl.stopcond);
+      bins_used = nester.execute(items.begin(), items.end());
+      result_bins = nester.lastResult();
+    } else if (use_djd) {
       NestConfig<NfpPlacer, DJDHeuristic> cfg;
       cfg.placer_config.rotations.clear();
       for (double deg : rotations_deg)
@@ -112,8 +126,10 @@ int main(int argc, char* argv[]) {
       if (cfg.placer_config.rotations.empty())
         cfg.placer_config.rotations = {0.0, PI/2, PI, 3*PI/2};
       cfg.selector_config.try_pairs = true;
-      cfg.selector_config.try_triplets = false;
+      cfg.selector_config.try_triplets = try_triplets;
       cfg.selector_config.try_reverse_order = true;
+      cfg.selector_config.initial_fill_proportion = initial_fill_proportion;
+      cfg.selector_config.waste_increment = waste_increment;
       _Nester<NfpPlacer, DJDHeuristic> nester(bin, scaled_spacing, cfg.placer_config, cfg.selector_config);
       if (ctl.stopcond) nester.stopCondition(ctl.stopcond);
       bins_used = nester.execute(items.begin(), items.end());

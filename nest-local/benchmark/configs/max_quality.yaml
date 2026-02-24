@@ -1,0 +1,40 @@
+# Configurações para benchmark de utilização (comparar modelos)
+# Cada entrada é um nome + options enviados no POST (merge com o payload do caso).
+# Métrica principal: utilization (maior = melhor); secundárias: bins_used, runtime_ms.
+
+configs:
+  - name: first_fit_4rot
+    options:
+      selection: first_fit
+      rotations: [0, 90, 180, 270]
+      timeout_ms: 0
+
+  - name: djd_no_triplets
+    options:
+      selection: djd
+      try_triplets: false
+      rotations: [0, 90, 180, 270]
+      timeout_ms: 0
+
+  - name: djd_triplets
+    options:
+      selection: djd
+      try_triplets: true
+      rotations: [0, 90, 180, 270]
+      timeout_ms: 0
+
+  - name: djd_triplets_60s
+    options:
+      selection: djd
+      try_triplets: true
+      rotations: [0, 90, 180, 270]
+      timeout_ms: 60000
+
+  - name: djd_triplets_tuned
+    options:
+      selection: djd
+      try_triplets: true
+      initial_fill_proportion: 0.33
+      waste_increment: 0.05
+      rotations: [0, 90, 180, 270]
+      timeout_ms: 0
