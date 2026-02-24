@@ -107,10 +107,7 @@ export async function runLibnest2dNesting(
     });
 
     if (status.status === "SUCCEEDED") {
-      if (
-        status.result &&
-        Array.isArray(status.result.placements)
-      ) {
+      if (status.result && Array.isArray(status.result.placements)) {
         return status.result;
       }
       if (status.result_url) {
