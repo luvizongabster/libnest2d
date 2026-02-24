@@ -28,8 +28,8 @@ services:
       DYNAMODB_ENDPOINT: http://dynamodb:8000
       S3_ENDPOINT: http://minio:9000
       # S3_PUBLIC_ENDPOINT: URL pública do MinIO acessível pelo browser/cliente.
-      # Em produção (DO/AWS) troque pelo IP/domínio público. Ex.: http://159.223.149.208:9000
-      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+      # Proxied through nginx for HTTPS + CORS. Override via env var for local dev.
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-https://api2.gabster.com.br/s3}
       S3_BUCKET: nest-results
     depends_on:
       init:
@@ -86,10 +86,9 @@ services:
     ports:
       - "0.0.0.0:80:80"
       - "0.0.0.0:443:443"
-      - "0.0.0.0:8443:8443"
     volumes:
       - ./services/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./certs:/etc/nginx/certs:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       api:
         condition: service_healthy
